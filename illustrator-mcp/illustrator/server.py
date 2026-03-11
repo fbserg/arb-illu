@@ -19,12 +19,17 @@ from PIL import ImageGrab
 try:
     import win32com.client
     import pythoncom
+    import win32gui
+    import win32con
     WIN32_AVAILABLE = True
     print("WIN32 COM modules loaded successfully", file=sys.stderr)
 except ImportError as e:
     print(f"Win32 COM not available: {e}", file=sys.stderr)
     WIN32_AVAILABLE = False
     win32com = None
+    pythoncom = None
+    win32gui = None
+    win32con = None
 
 try:
     from .prompt import (
@@ -51,6 +56,21 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(message)s",
     datefmt="%Y-%m-%dT%H:%M:%S",
 )
+
+def get_illustrator_with_retry(max_attempts=3, delay=1.0):
+    if pythoncom is None or win32com is None:
+        raise RuntimeError("Win32 COM not available")
+    last_err: Exception = RuntimeError("Illustrator not reachable after retries")
+    for attempt in range(max_attempts):
+        try:
+            pythoncom.CoInitialize()
+            return win32com.client.GetActiveObject("Illustrator.Application")
+        except Exception as e:
+            last_err = e
+            if attempt < max_attempts - 1:
+                time.sleep(delay)
+    raise last_err
+
 
 server = Server("illustrator")
 
@@ -94,6 +114,11 @@ async def handle_list_tools() -> list[types.Tool]:
                 },
                 "required": ["code"],
             },
+        ),
+        types.Tool(
+            name="query",
+            description="Query the current Illustrator document state — returns JSON with layer list, circle counts, and sample positions. Use instead of screenshots for verification.",
+            inputSchema={"type": "object", "properties": {}},
         ),
         types.Tool(
             name="get_prompt_suggestions",
@@ -154,16 +179,26 @@ async def handle_list_tools() -> list[types.Tool]:
         ),
     ]
 
+def _focus_illustrator():
+    if win32gui is None:
+        return
+    results: list = []
+    def cb(hwnd: int, _: object) -> None:
+        if win32gui.IsWindowVisible(hwnd) and "Adobe Illustrator" in win32gui.GetWindowText(hwnd):  # type: ignore[union-attr]
+            results.append(hwnd)
+    win32gui.EnumWindows(cb, None)  # type: ignore[union-attr]
+    if results:
+        win32gui.SetForegroundWindow(results[0])  # type: ignore[union-attr]
+        time.sleep(0.5)
+
+
 def capture_illustrator() -> list[types.TextContent | types.ImageContent]:
     logging.info("Starting screenshot capture for Illustrator.")
     if not WIN32_AVAILABLE:
         return [types.TextContent(type="text", text="Win32 COM not available. Please install pywin32 and restart the server.")]
 
     try:
-        pythoncom.CoInitialize()
-        shell = win32com.client.Dispatch("WScript.Shell")
-        shell.AppActivate("Adobe Illustrator")
-        time.sleep(1)
+        _focus_illustrator()
         screenshot = ImageGrab.grab()
         buffer = io.BytesIO()
         screenshot.save(buffer, format="JPEG", quality=50, optimize=True)
@@ -180,12 +215,11 @@ def run_illustrator_script(code: str) -> list[types.TextContent]:
         return [types.TextContent(type="text", text="Win32 COM not available. Please install pywin32 and restart the server.")]
 
     try:
-        pythoncom.CoInitialize()
         with tempfile.NamedTemporaryFile(suffix=".jsx", delete=False) as jsx_file:
             jsx_file.write(code.encode("utf-8"))
             jsx_file_path = jsx_file.name
         logging.debug(f"ExtendScript saved to: {jsx_file_path}")
-        illustrator = win32com.client.GetActiveObject("Illustrator.Application")
+        illustrator = get_illustrator_with_retry()
         result = illustrator.DoJavaScriptFile(jsx_file_path)
         logging.info("ExtendScript executed successfully.")
         os.unlink(jsx_file_path)
@@ -195,6 +229,107 @@ def run_illustrator_script(code: str) -> list[types.TextContent]:
     except Exception as e:
         logging.error(f"Failed to execute script: {str(e)}")
         return [types.TextContent(type="text", text=f"Failed to execute script: {str(e)}")]
+
+def query_illustrator_state() -> list[types.TextContent]:
+    logging.info("Querying Illustrator document state.")
+    if not WIN32_AVAILABLE:
+        return [types.TextContent(type="text", text="Win32 COM not available.")]
+
+    jsx = r"""
+(function() {
+    var doc;
+    try { doc = app.activeDocument; } catch(e) { return '{"error":"No document open"}'; }
+
+    var ab = doc.artboards[0].artboardRect;
+    var artboard = [ab[0], ab[1], ab[2], ab[3]];
+
+    var layers = [];
+    for (var i = 0; i < doc.layers.length; i++) {
+        var l = doc.layers[i];
+        layers.push({ name: l.name, visible: l.visible, locked: l.locked });
+    }
+
+    // Find TPZs layer using only pathItems (never pageItems)
+    var tpzLayer = null;
+    for (var li = 0; li < doc.layers.length; li++) {
+        if (doc.layers[li].name === 'TPZs') { tpzLayer = doc.layers[li]; break; }
+    }
+
+    var tpzCircles = [];
+    var tpzCount = 0;
+    var trunkCount = 0;
+
+    if (tpzLayer) {
+        // Count direct path items that look like circles (TPZ layer)
+        var paths = tpzLayer.pathItems;
+        for (var pi = 0; pi < paths.length; pi++) {
+            var item = paths[pi];
+            // Only consider direct children of TPZs layer
+            try { if (item.parent.name !== 'TPZs') continue; } catch(e) { continue; }
+            var gb = item.geometricBounds;
+            var w = Math.abs(gb[2] - gb[0]);
+            var h = Math.abs(gb[1] - gb[3]);
+            if (w <= 0 || h <= 0) continue;
+            var isCircle = Math.abs(w - h) / Math.max(w, h) < 0.15 && item.pathPoints.length >= 4 && item.pathPoints.length <= 5;
+            if (!isCircle) continue;
+            tpzCount++;
+            if (tpzCircles.length < 5) {
+                var cx = (gb[0] + gb[2]) / 2;
+                var cy = (gb[1] + gb[3]) / 2;
+                var colorName = "unknown";
+                try {
+                    var sc = item.strokeColor;
+                    if (sc.typename === 'CMYKColor') {
+                        colorName = sc.cyan >= 60 ? "green" : "orange";
+                    }
+                } catch(e) {}
+                tpzCircles.push({ cx: Math.round(cx), cy: Math.round(cy), diameter: Math.round(w), color: colorName, dashed: item.strokeDashes && item.strokeDashes.length > 0 });
+            }
+        }
+
+        // Count trunk circles in Trunks sublayer
+        for (var sli = 0; sli < tpzLayer.layers.length; sli++) {
+            var sub = tpzLayer.layers[sli];
+            if (sub.name === 'Trunks') {
+                var tpaths = sub.pathItems;
+                for (var tpi = 0; tpi < tpaths.length; tpi++) {
+                    var titem = tpaths[tpi];
+                    var tgb = titem.geometricBounds;
+                    var tw = Math.abs(tgb[2] - tgb[0]);
+                    var th = Math.abs(tgb[1] - tgb[3]);
+                    if (tw <= 0 || th <= 0) continue;
+                    if (Math.abs(tw - th) / Math.max(tw, th) < 0.15) trunkCount++;
+                }
+                break;
+            }
+        }
+    }
+
+    var result = {
+        doc: doc.name,
+        artboard: artboard,
+        layers: layers,
+        tpz_circles: tpzCircles,
+        tpz_count: tpzCount,
+        trunk_count: trunkCount,
+        error: null
+    };
+    return JSON.stringify(result);
+})();
+"""
+    try:
+        illustrator = get_illustrator_with_retry()
+        with tempfile.NamedTemporaryFile(suffix=".jsx", delete=False) as jsx_file:
+            jsx_file.write(jsx.encode("utf-8"))
+            jsx_file_path = jsx_file.name
+        result = illustrator.DoJavaScriptFile(jsx_file_path)
+        os.unlink(jsx_file_path)
+        result_text = str(result) if result is not None else '{"error": "No result returned"}'
+        return [types.TextContent(type="text", text=result_text)]
+    except Exception as e:
+        logging.error(f"Failed to query state: {str(e)}")
+        return [types.TextContent(type="text", text=f'{{"error": "{str(e)}"}}')]
+
 
 @server.call_tool()
 async def handle_call_tool(name: str, arguments: dict | None):
@@ -209,6 +344,9 @@ async def handle_call_tool(name: str, arguments: dict | None):
             return [types.TextContent(type="text", text="No code provided")]
         return run_illustrator_script(arguments["code"])
     
+    elif name == "query":
+        return query_illustrator_state()
+
     elif name == "get_prompt_suggestions":
         try:
             suggestions = get_prompt_suggestions()

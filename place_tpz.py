@@ -148,12 +148,21 @@ JSX_BODY = r"""
         }
     }
 
-    return JSON.stringify({
-        tpz_placed:    tpzPlaced,
-        trunks_placed: trunksPlaced,
-        skipped:       skipped,
-        errors:        errors
-    });
+    // Manual JSON — ExtendScript has no native JSON object
+    var skippedJson = '[';
+    for (var si = 0; si < skipped.length; si++) {
+        if (si > 0) skippedJson += ',';
+        skippedJson += '{"num":"' + skipped[si].num + '","reason":"' + skipped[si].reason.replace(/"/g,'\\"') + '"}';
+    }
+    skippedJson += ']';
+    var errorsJson = '[';
+    for (var ei = 0; ei < errors.length; ei++) {
+        if (ei > 0) errorsJson += ',';
+        errorsJson += '{"num":"' + errors[ei].num + '","error":"' + errors[ei].error.replace(/"/g,'\\"') + '"}';
+    }
+    errorsJson += ']';
+    return '{"tpz_placed":' + tpzPlaced + ',"trunks_placed":' + trunksPlaced +
+        ',"skipped":' + skippedJson + ',"errors":' + errorsJson + '}';
 })();
 """
 

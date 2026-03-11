@@ -10,52 +10,38 @@ except ImportError:
     print("ERROR: pywin32 not installed. Run: pip install pywin32")
     sys.exit(1)
 
-EXCEL_PATH = r"C:\Projects\arborist-plans\Projects\7631-creditview\7631 Creditview Rd.xlsx"
+import csv
+
+CSV_PATH  = r"C:\Projects\arborist-plans\Projects\7631-creditview\data.csv"
+XLSX_PATH = r"C:\Projects\arborist-plans\Projects\7631-creditview\7631 Creditview Rd.xlsx"
 
 
-def read_excel(path):
-    pythoncom.CoInitialize()
-    xl = win32com.client.Dispatch("Excel.Application")
-    xl.Visible = False
-    xl.DisplayAlerts = False
-    wb = xl.Workbooks.Open(os.path.abspath(path))
-    ws = wb.Sheets("Sheet1")
-
+def read_csv(path):
+    if os.path.exists(XLSX_PATH) and os.path.getmtime(XLSX_PATH) > os.path.getmtime(path):
+        print("WARNING: Excel is newer than data.csv — run: python export_data.py")
     trees = []
-    row = 3
-    while True:
-        tree_num = ws.Cells(row, 1).Value  # col A
-        if tree_num is None:
-            break
-
-        direction = ws.Cells(row, 9).Value   # col I
-        size_raw  = ws.Cells(row, 14).Value  # col N
-        cx_raw    = ws.Cells(row, 15).Value  # col O
-        cy_raw    = ws.Cells(row, 16).Value  # col P
-
-        size_mm = float(size_raw) if isinstance(size_raw, (int, float)) else None
-
-        if not isinstance(cx_raw, (int, float)) or not isinstance(cy_raw, (int, float)):
-            row += 1
-            continue
-
-        trees.append({
-            "num": str(int(tree_num)) if isinstance(tree_num, (int, float)) else str(tree_num),
-            "dir": str(direction) if direction else "",
-            "cx": float(cx_raw),
-            "cy": float(cy_raw),
-            "size_mm": size_mm,
-        })
-        row += 1
-
-    wb.Close(False)
+    with open(path, newline='', encoding='utf-8') as f:
+        for row in csv.DictReader(f):
+            cx = float(row['cx']) if row['cx'] else None
+            cy = float(row['cy']) if row['cy'] else None
+            if cx is None or cy is None:
+                continue
+            tpz_circle_m = float(row['tpz_circle_m']) if row['tpz_circle_m'] else None
+            size_mm = tpz_circle_m * 4.0 if tpz_circle_m else None
+            trees.append({
+                'num':     row['tree_num'],
+                'dir':     row['direction'],
+                'cx':      cx,
+                'cy':      cy,
+                'size_mm': size_mm,
+            })
     return trees
 
 
 JSX_BODY = r"""
 (function() {
     var doc;
-    try { doc = app.activeDocument; } catch(e) { return JSON.stringify({error: "No document open"}); }
+    try { doc = app.activeDocument; } catch(e) { return '{"error":"No document open"}'; }
 
     var ab = doc.artboards[0].artboardRect; // [left, top, right, bottom]
     var abLeft  = ab[0], abTop    = ab[1];
@@ -101,30 +87,20 @@ JSX_BODY = r"""
         return Math.sqrt(dx * dx + dy * dy);
     }
 
-    // Get path items that are direct children of `layer` (not in sublayers)
-    function directPathItems(layer) {
-        var result = [];
-        var items = layer.pathItems; // recursive collection
-        for (var i = 0; i < items.length; i++) {
-            var parentName = '';
-            try { parentName = items[i].parent.name; } catch(e) {}
-            if (parentName === layer.name) result.push(items[i]);
-        }
-        return result;
-    }
-
     // Find TPZs layer
     var tpzLayer = null;
     for (var li = 0; li < doc.layers.length; li++) {
         if (doc.layers[li].name === 'TPZs') { tpzLayer = doc.layers[li]; break; }
     }
-    if (!tpzLayer) return JSON.stringify({error: "TPZs layer not found"});
+    if (!tpzLayer) return '{"error":"TPZs layer not found"}';
 
-    var allDirect = directPathItems(tpzLayer);
+    // pathItems is recursive — includes items inside groups.
+    // TPZ circles are unfilled; trunk dots are filled. Use !item.filled to exclude trunks.
+    var allItems = tpzLayer.pathItems;
     var circles = [], lines = [];
-    for (var i = 0; i < allDirect.length; i++) {
-        var item = allDirect[i];
-        if (isCircle(item)) {
+    for (var i = 0; i < allItems.length; i++) {
+        var item = allItems[i];
+        if (isCircle(item) && !item.filled) {
             circles.push(item);
         } else if (item.pathPoints.length === 2 && !item.closed) {
             lines.push(item);
@@ -285,7 +261,14 @@ JSX_BODY = r"""
         else if (checks[i].status === "FAIL") nFail++;
         else if (checks[i].status === "WARN") nWarn++;
     }
-    return JSON.stringify({checks: checks, summary: {pass: nPass, fail: nFail, warn: nWarn}});
+    var chJson = '[';
+    for (var ci = 0; ci < checks.length; ci++) {
+        if (ci > 0) chJson += ',';
+        var ch = checks[ci];
+        chJson += '{"name":"' + ch.name + '","status":"' + ch.status + '","message":"' + ch.message.replace(/\\/g,'\\\\').replace(/"/g,'\\"') + '"}';
+    }
+    chJson += ']';
+    return '{"checks":' + chJson + ',"summary":{"pass":' + nPass + ',"fail":' + nFail + ',"warn":' + nWarn + '}}';
 })();
 """
 
@@ -323,8 +306,8 @@ def print_report(results):
 
 
 def main():
-    print(f"Reading Excel: {EXCEL_PATH}")
-    trees = read_excel(EXCEL_PATH)
+    print(f"Reading CSV: {CSV_PATH}")
+    trees = read_csv(CSV_PATH)
     print(f"  {len(trees)} trees loaded")
 
     jsx = build_jsx(trees)

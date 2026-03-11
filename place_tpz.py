@@ -1,5 +1,6 @@
 import sys
 import os
+import csv
 import json
 import argparse
 import tempfile
@@ -11,8 +12,10 @@ except ImportError:
     print("ERROR: pywin32 not installed. Run: pip install pywin32")
     sys.exit(1)
 
-EXCEL_PATH = r"C:\Projects\arborist-plans\Projects\7631-creditview\7631 Creditview Rd.xlsx"
+CSV_PATH  = r"C:\Projects\arborist-plans\Projects\7631-creditview\data.csv"
+XLSX_PATH = r"C:\Projects\arborist-plans\Projects\7631-creditview\7631 Creditview Rd.xlsx"
 
+# CLEAR_FIRST and TREES are injected by Python before this body runs.
 JSX_BODY = r"""
 (function() {
     var doc;
@@ -20,7 +23,6 @@ JSX_BODY = r"""
 
     var PT_PER_MM = 72.0 / 25.4;
 
-    // Colour helpers
     function cmyk(c, m, y, k) {
         var col = new CMYKColor();
         col.cyan = c; col.magenta = m; col.yellow = y; col.black = k;
@@ -29,7 +31,6 @@ JSX_BODY = r"""
     var GREEN  = cmyk(70, 0,  100, 0);
     var ORANGE = cmyk(0,  62, 100, 0);
 
-    // Find or create a layer by name under parent
     function findOrCreateLayer(parent, name) {
         var coll = parent.layers;
         for (var i = 0; i < coll.length; i++) {
@@ -40,29 +41,23 @@ JSX_BODY = r"""
         return l;
     }
 
-    // Clear a layer using only typed collections (never pageItems)
-    function clearLayer(layer) {
-        while (layer.pathItems.length > 0) layer.pathItems[0].remove();
-        while (layer.textFrames.length > 0) layer.textFrames[0].remove();
-        while (layer.groupItems.length > 0) layer.groupItems[0].remove();
-    }
-
-    // Get artboard bounds for out-of-bounds check
     var ab = doc.artboards[0].artboardRect;
     var abLeft = ab[0], abTop = ab[1], abRight = ab[2], abBottom = ab[3];
 
-    // Find or create layers
-    var tpzLayer    = findOrCreateLayer(doc, 'TPZs');
-    var trunkLayer  = findOrCreateLayer(tpzLayer, 'Trunks');
+    var tpzLayer   = findOrCreateLayer(doc, 'TPZs');
+    tpzLayer.visible = true; tpzLayer.locked = false;
 
-    tpzLayer.visible  = true; tpzLayer.locked  = false;
-    trunkLayer.visible = true; trunkLayer.locked = false;
+    if (CLEAR_FIRST) {
+        // Groups clear their children in one shot — much faster than path-by-path removal.
+        // Remove sublayers first so pathItems is non-recursive before the safety sweep.
+        for (var di = tpzLayer.layers.length - 1; di >= 0; di--) {
+            tpzLayer.layers[di].remove();
+        }
+        while (tpzLayer.groupItems.length > 0) tpzLayer.groupItems[0].remove();
+        while (tpzLayer.pathItems.length  > 0) tpzLayer.pathItems[0].remove();
+    }
 
-    // Clear existing circles (idempotent re-run)
-    clearLayer(tpzLayer);
-    clearLayer(trunkLayer);
-
-    var tpzPlaced   = 0;
+    var tpzPlaced    = 0;
     var trunksPlaced = 0;
     var skipped = [];
     var errors  = [];
@@ -82,129 +77,102 @@ JSX_BODY = r"""
         var tpzDiam = tpzMm * PT_PER_MM;
         var tpzRad  = tpzDiam / 2;
 
-        // Bounds check
         if (cx < abLeft || cx > abRight || cy > abTop || cy < abBottom) {
             skipped.push({ num: tree.num, reason: "outside artboard" });
             continue;
         }
 
-        var color = (dir === 'Protect') ? GREEN : ORANGE;
+        // Retain is visually identical to Protect (green, solid, no X)
+        var color = (dir === 'Protect' || dir === 'Retain') ? GREEN : ORANGE;
 
-        // TPZ circle: ellipse(top, left, width, height) in AI coords
         try {
+            // Named group per tree — allows targeted select/delete/move
+            var grp = tpzLayer.groupItems.add();
+            grp.name = 'Tree ' + tree.num;
+
+            // Create items on the layer, then move into group (last moved = on top)
             var circle = tpzLayer.pathItems.ellipse(cy + tpzRad, cx - tpzRad, tpzDiam, tpzDiam);
-            circle.filled  = false;
-            circle.stroked = true;
-            circle.strokeColor = color;
-            circle.strokeWidth = 1.5;
+            circle.filled       = false;
+            circle.stroked      = true;
+            circle.strokeColor  = color;
+            circle.strokeWidth  = 0.84;
+            circle.strokeDashes = (dir === 'Injury') ? [5] : [];
+            circle.move(grp, ElementPlacement.PLACEATBEGINNING);
 
-            if (dir === 'Injury') {
-                circle.strokeDashes = [4, 2];
-            } else {
-                circle.strokeDashes = [];
-            }
-
-            if (dir === 'Removal') {
-                // Two diagonal X-lines through center
-                var r = tpzRad * 0.707; // sin(45)
+            if (dir === 'Remove' || dir === 'Removal') {
+                var r = tpzRad * 0.707;
                 var line1 = tpzLayer.pathItems.add();
                 line1.setEntirePath([[cx - r, cy - r], [cx + r, cy + r]]);
-                line1.filled  = false;
-                line1.stroked = true;
-                line1.strokeColor = ORANGE;
-                line1.strokeWidth = 1.0;
+                line1.filled = false; line1.stroked = true;
+                line1.strokeColor = ORANGE; line1.strokeWidth = 0.84;
+                line1.move(grp, ElementPlacement.PLACEATBEGINNING);
 
                 var line2 = tpzLayer.pathItems.add();
                 line2.setEntirePath([[cx - r, cy + r], [cx + r, cy - r]]);
-                line2.filled  = false;
-                line2.stroked = true;
-                line2.strokeColor = ORANGE;
-                line2.strokeWidth = 1.0;
+                line2.filled = false; line2.stroked = true;
+                line2.strokeColor = ORANGE; line2.strokeWidth = 0.84;
+                line2.move(grp, ElementPlacement.PLACEATBEGINNING);
             }
 
             tpzPlaced++;
-        } catch(e) {
-            errors.push({ num: tree.num, error: e.toString() });
-            continue;
-        }
 
-        // Trunk circle (if trunk_mm present)
-        if (trunkMm !== null && trunkMm > 0) {
-            try {
+            // Trunk dot inside the same group (moved last = sits on top)
+            if (trunkMm !== null && trunkMm > 0) {
                 var tDiam = trunkMm * PT_PER_MM;
                 var tRad  = tDiam / 2;
-                var trunk = trunkLayer.pathItems.ellipse(cy + tRad, cx - tRad, tDiam, tDiam);
-
-                var fillColor = (dir === 'Protect') ? cmyk(70, 0, 100, 0) : cmyk(0, 62, 100, 0);
-                trunk.filled     = true;
-                trunk.fillColor  = fillColor;
-                trunk.opacity    = 50;
-                trunk.stroked    = false;
-
+                var trunk = tpzLayer.pathItems.ellipse(cy + tRad, cx - tRad, tDiam, tDiam);
+                var fillColor = (dir === 'Protect' || dir === 'Retain') ? cmyk(70,0,100,0) : cmyk(0,62,100,0);
+                trunk.filled    = true;
+                trunk.fillColor = fillColor;
+                trunk.opacity   = 50;
+                trunk.stroked   = false;
+                trunk.move(grp, ElementPlacement.PLACEATBEGINNING);
                 trunksPlaced++;
-            } catch(e) {
-                errors.push({ num: tree.num, error: "trunk: " + e.toString() });
             }
+        } catch(e) {
+            errors.push({ num: tree.num, error: e.toString() });
         }
     }
 
-    // Manual JSON — ExtendScript has no native JSON object
-    var skippedJson = '[';
+    var skJson = '[';
     for (var si = 0; si < skipped.length; si++) {
-        if (si > 0) skippedJson += ',';
-        skippedJson += '{"num":"' + skipped[si].num + '","reason":"' + skipped[si].reason.replace(/"/g,'\\"') + '"}';
+        if (si > 0) skJson += ',';
+        skJson += '{"num":"' + skipped[si].num + '","reason":"' + skipped[si].reason.replace(/"/g,'\\"') + '"}';
     }
-    skippedJson += ']';
-    var errorsJson = '[';
+    skJson += ']';
+    var erJson = '[';
     for (var ei = 0; ei < errors.length; ei++) {
-        if (ei > 0) errorsJson += ',';
-        errorsJson += '{"num":"' + errors[ei].num + '","error":"' + errors[ei].error.replace(/"/g,'\\"') + '"}';
+        if (ei > 0) erJson += ',';
+        erJson += '{"num":"' + errors[ei].num + '","error":"' + errors[ei].error.replace(/"/g,'\\"') + '"}';
     }
-    errorsJson += ']';
+    erJson += ']';
     return '{"tpz_placed":' + tpzPlaced + ',"trunks_placed":' + trunksPlaced +
-        ',"skipped":' + skippedJson + ',"errors":' + errorsJson + '}';
+        ',"skipped":' + skJson + ',"errors":' + erJson + '}';
 })();
 """
 
 
-def read_excel(path):
-    pythoncom.CoInitialize()
-    xl = win32com.client.Dispatch("Excel.Application")
-    xl.Visible = False
-    xl.DisplayAlerts = False
-    wb = xl.Workbooks.Open(os.path.abspath(path))
-    ws = wb.Sheets("Sheet1")
-
+def read_csv(path):
+    if os.path.exists(XLSX_PATH) and os.path.getmtime(XLSX_PATH) > os.path.getmtime(path):
+        print("WARNING: Excel is newer than data.csv — run: python export_data.py")
     trees = []
-    row = 3
-    while True:
-        tree_num_raw = ws.Cells(row, 1).Value   # col A: tree number
-        if tree_num_raw is None:
-            break
-        direction = ws.Cells(row, 9).Value      # col I: Protect/Injury/Removal
-        tpz_raw   = ws.Cells(row, 14).Value     # col N: TPZ diameter (mm)
-        cx_raw    = ws.Cells(row, 15).Value     # col O: center x (pt)
-        cy_raw    = ws.Cells(row, 16).Value     # col P: center y (pt)
-        trunk_raw = ws.Cells(row, 17).Value     # col Q: trunk diameter (mm)
-
-        tpz_mm   = float(tpz_raw)   if isinstance(tpz_raw,   (int, float)) and tpz_raw  > 0 else None
-        trunk_mm = float(trunk_raw) if isinstance(trunk_raw, (int, float)) and trunk_raw > 0 else None
-
-        if not isinstance(cx_raw, (int, float)) or not isinstance(cy_raw, (int, float)):
-            row += 1
-            continue
-
-        trees.append({
-            "num":      str(int(tree_num_raw)) if isinstance(tree_num_raw, (int, float)) else str(tree_num_raw).strip(),
-            "dir":      str(direction) if direction else "",
-            "tpz_mm":   tpz_mm,
-            "trunk_mm": trunk_mm,
-            "cx":       float(cx_raw),
-            "cy":       float(cy_raw),
-        })
-        row += 1
-
-    wb.Close(False)
+    with open(path, newline='', encoding='utf-8') as f:
+        for row in csv.DictReader(f):
+            cx = float(row['cx']) if row['cx'] else None
+            cy = float(row['cy']) if row['cy'] else None
+            if cx is None or cy is None:
+                continue
+            tpz_circle_m = float(row['tpz_circle_m']) if row['tpz_circle_m'] else None
+            tpz_mm = tpz_circle_m * 4.0 if tpz_circle_m else None
+            trunk_mm = float(row['trunk_mm']) if row['trunk_mm'] else 2.0
+            trees.append({
+                'num':      row['tree_num'],
+                'dir':      row['direction'],
+                'tpz_mm':   tpz_mm,
+                'trunk_mm': trunk_mm,
+                'cx':       cx,
+                'cy':       cy,
+            })
     return trees
 
 
@@ -226,21 +194,32 @@ def run_jsx(jsx_code):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Place TPZ circles and trunk indicators in Illustrator")
-    parser.add_argument("--limit", type=int, default=None, help="Process only first N trees")
+    parser = argparse.ArgumentParser(description="Place TPZ circles in Illustrator (10 trees at a time recommended)")
+    parser.add_argument("--offset", type=int, default=0,   help="Skip first N trees (for batching)")
+    parser.add_argument("--limit",  type=int, default=10,  help="Process at most N trees (default 10)")
+    parser.add_argument("--all",    action="store_true",   help="Process all trees in one shot (overrides --limit)")
     args = parser.parse_args()
 
-    print(f"Reading Excel: {EXCEL_PATH}")
-    trees = read_excel(EXCEL_PATH)
+    print(f"Reading CSV: {CSV_PATH}")
+    trees = read_csv(CSV_PATH)
     print(f"  {len(trees)} trees loaded")
 
-    if args.limit is not None:
+    trees = trees[args.offset:]
+    if not args.all:
         trees = trees[:args.limit]
-        print(f"  Limited to first {len(trees)} trees")
 
-    jsx = "var TREES = " + json.dumps(trees) + ";\n" + JSX_BODY
+    clear_first = (args.offset == 0)
 
-    print("Placing TPZ circles and trunks in Illustrator...")
+    print(f"  Placing trees {args.offset + 1}–{args.offset + len(trees)} "
+          f"({'clearing layer first' if clear_first else 'appending'})")
+
+    jsx = (
+        "var TREES = " + json.dumps(trees) + ";\n" +
+        "var CLEAR_FIRST = " + ("true" if clear_first else "false") + ";\n" +
+        JSX_BODY
+    )
+
+    print("Sending to Illustrator...")
     raw = run_jsx(jsx)
     data = json.loads(raw)
 
@@ -248,7 +227,7 @@ def main():
         print(f"ERROR: {data['error']}")
         sys.exit(1)
 
-    print(f"TPZ circles placed:  {data['tpz_placed']}")
+    print(f"TPZ circles placed:   {data['tpz_placed']}")
     print(f"Trunk circles placed: {data['trunks_placed']}")
     if data.get("skipped"):
         print(f"Skipped ({len(data['skipped'])}):")
@@ -258,6 +237,9 @@ def main():
         print(f"Errors ({len(data['errors'])}):")
         for e in data["errors"]:
             print(f"  Tree #{e['num']}: {e['error']}")
+
+    if not args.all and len(trees) == args.limit:
+        print(f"\nNext batch: python place_tpz.py --offset {args.offset + args.limit}")
 
 
 if __name__ == "__main__":

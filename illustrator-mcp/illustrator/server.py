@@ -57,7 +57,7 @@ logging.basicConfig(
     datefmt="%Y-%m-%dT%H:%M:%S",
 )
 
-def get_illustrator_with_retry(max_attempts=3, delay=1.0):
+def get_illustrator_with_retry(max_attempts=3, delay=0.3):
     if pythoncom is None or win32com is None:
         raise RuntimeError("Win32 COM not available")
     last_err: Exception = RuntimeError("Illustrator not reachable after retries")
@@ -305,16 +305,33 @@ def query_illustrator_state() -> list[types.TextContent]:
         }
     }
 
-    var result = {
-        doc: doc.name,
-        artboard: artboard,
-        layers: layers,
-        tpz_circles: tpzCircles,
-        tpz_count: tpzCount,
-        trunk_count: trunkCount,
-        error: null
-    };
-    return JSON.stringify(result);
+    // Manual JSON serialization — ExtendScript has no native JSON object
+    var layersJson = '[';
+    for (var lj = 0; lj < layers.length; lj++) {
+        if (lj > 0) layersJson += ',';
+        var ll = layers[lj];
+        layersJson += '{"name":"' + ll.name.replace(/\\/g,'\\\\').replace(/"/g,'\\"') + '"' +
+            ',"visible":' + (ll.visible ? 'true' : 'false') +
+            ',"locked":'  + (ll.locked  ? 'true' : 'false') + '}';
+    }
+    layersJson += ']';
+
+    var circlesJson = '[';
+    for (var cj = 0; cj < tpzCircles.length; cj++) {
+        if (cj > 0) circlesJson += ',';
+        var cc = tpzCircles[cj];
+        circlesJson += '{"cx":' + cc.cx + ',"cy":' + cc.cy + ',"diameter":' + cc.diameter +
+            ',"color":"' + cc.color + '","dashed":' + (cc.dashed ? 'true' : 'false') + '}';
+    }
+    circlesJson += ']';
+
+    return '{"doc":"' + doc.name.replace(/\\/g,'\\\\').replace(/"/g,'\\"') + '"' +
+        ',"artboard":[' + artboard[0] + ',' + artboard[1] + ',' + artboard[2] + ',' + artboard[3] + ']' +
+        ',"layers":' + layersJson +
+        ',"tpz_circles":' + circlesJson +
+        ',"tpz_count":' + tpzCount +
+        ',"trunk_count":' + trunkCount +
+        ',"error":null}';
 })();
 """
     try:

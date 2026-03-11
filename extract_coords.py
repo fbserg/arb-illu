@@ -2,6 +2,7 @@ import sys
 import os
 import json
 import tempfile
+import subprocess
 
 try:
     import win32com.client
@@ -15,13 +16,13 @@ EXCEL_PATH = r"C:\Projects\arborist-plans\Projects\7631-creditview\7631 Creditvi
 JSX = r"""
 (function() {
     var doc;
-    try { doc = app.activeDocument; } catch(e) { return JSON.stringify({error: "No document open"}); }
+    try { doc = app.activeDocument; } catch(e) { return '{"error":"No document open"}'; }
 
     var dimLayer = null;
     for (var li = 0; li < doc.layers.length; li++) {
         if (doc.layers[li].name === 'Dimensions') { dimLayer = doc.layers[li]; break; }
     }
-    if (!dimLayer) return JSON.stringify({error: "Dimensions layer not found"});
+    if (!dimLayer) return '{"error":"Dimensions layer not found"}';
 
     function dist(ax, ay, bx, by) {
         var dx = ax - bx, dy = ay - by;
@@ -161,6 +162,11 @@ def main():
         print(f"Not found in Illustrator: {', '.join(not_found)}  (check leader lines)")
     if skipped:
         print(f"Already had coords (skipped): {', '.join(skipped)}")
+
+    if filled:
+        print("\nRegenerating data.csv...")
+        script = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'export_data.py')
+        subprocess.run([sys.executable, script], check=True)
 
 
 if __name__ == "__main__":

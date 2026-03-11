@@ -1,5 +1,6 @@
 import sys
 import os
+import csv
 import json
 import argparse
 import tempfile
@@ -11,7 +12,8 @@ except ImportError:
     print("ERROR: pywin32 not installed. Run: pip install pywin32")
     sys.exit(1)
 
-EXCEL_PATH = r"C:\Projects\arborist-plans\Projects\7631-creditview\7631 Creditview Rd.xlsx"
+CSV_PATH  = r"C:\Projects\arborist-plans\Projects\7631-creditview\data.csv"
+XLSX_PATH = r"C:\Projects\arborist-plans\Projects\7631-creditview\7631 Creditview Rd.xlsx"
 
 JSX_BODY = r"""
 (function() {
@@ -20,53 +22,22 @@ JSX_BODY = r"""
 
     var fontName = "Arial-BoldMT", fontSize = 5;
 
-    // isCircle helper (from review.py)
-    function isCircle(item) {
-        if (item.typename !== 'PathItem') return false;
-        var pp = item.pathPoints;
-        if (pp.length < 4 || pp.length > 5) return false;
-        var gb = item.geometricBounds;
-        var w = Math.abs(gb[2] - gb[0]);
-        var h = Math.abs(gb[1] - gb[3]);
-        if (w <= 0 || h <= 0) return false;
-        return Math.abs(w - h) / Math.max(w, h) < 0.15;
-    }
-
-    // directPathItems helper (from review.py)
-    function directPathItems(layer) {
-        var result = [];
-        var items = layer.pathItems;
-        for (var i = 0; i < items.length; i++) {
-            var parentName = '';
-            try { parentName = items[i].parent.name; } catch(e) {}
-            if (parentName === layer.name) result.push(items[i]);
-        }
-        return result;
-    }
-
-    // 2 — Gather circle bounds from TPZs layer, expanded by 4pt margin
+    // 1 — Gather circle bounds from TPZs layer (circles are in groups)
     var tpzLayer = null;
     for (var li = 0; li < doc.layers.length; li++) {
         if (doc.layers[li].name === 'TPZs') { tpzLayer = doc.layers[li]; break; }
     }
     if (!tpzLayer) return '{"error":"TPZs layer not found"}';
 
-    var circleObstacles = [];
-    var allDirect = directPathItems(tpzLayer);
-    for (var i = 0; i < allDirect.length; i++) {
-        if (isCircle(allDirect[i])) {
-            var cg = allDirect[i].geometricBounds;
-            circleObstacles.push([cg[0]-4, cg[1]+4, cg[2]+4, cg[3]-4]);
-        }
-    }
-
-    // 3 — Labels layer: find or create, clear contents
+    // 2 — Labels layer: find or create, clear contents
     var labelsLayer = null;
     for (var li = 0; li < doc.layers.length; li++) {
         if (doc.layers[li].name === 'Labels') { labelsLayer = doc.layers[li]; break; }
     }
     if (labelsLayer) {
-        while (labelsLayer.pageItems.length > 0) labelsLayer.pageItems[0].remove();
+        while (labelsLayer.groupItems.length > 0) labelsLayer.groupItems[0].remove();
+        while (labelsLayer.pathItems.length  > 0) labelsLayer.pathItems[0].remove();
+        while (labelsLayer.textFrames.length > 0) labelsLayer.textFrames[0].remove();
     } else {
         labelsLayer = doc.layers.add();
         labelsLayer.name = 'Labels';
@@ -85,11 +56,6 @@ JSX_BODY = r"""
     var ORANGE = cmyk(0,  62, 100, 0);
     var BLACK  = cmyk(0,  0,  0,   100);
     var WHITE  = cmyk(0,  0,  0,   0);
-
-    // AABB overlap — AI coords: [left, top, right, bottom] where top > bottom
-    function overlaps(a, b) {
-        return a[0] < b[2] && a[2] > b[0] && a[3] < b[1] && a[1] > b[3];
-    }
 
     // Place a temp text frame at (lx, ly), read bounds, remove
     function measureLabel(contents, lx, ly, fName, fSize, just) {
@@ -114,14 +80,18 @@ JSX_BODY = r"""
     //        py = cy + cxOff*s    - cyOff*(1-s)   where s = sin(45) = cos(45)
     var S45 = Math.SQRT2 / 2;  // sin(45) = cos(45) ≈ 0.7071
     var placed = 0;
-    var placedBounds = [];
 
     for (var ti = 0; ti < TREES.length; ti++) {
         var tree = TREES[ti];
         var cx = tree.cx, cy = tree.cy;
+        var dir = tree.dir;
+
+        // Retain is visually identical to Protect
+        var isProtect = (dir === 'Protect' || dir === 'Retain');
+        var abbr  = isProtect ? 'Pro' : dir === 'Injury' ? 'Inj' : 'Rem';
+        var color = isProtect ? GREEN : ORANGE;
 
         // Compact label: "#1 Pro 12.0m" / "#1 Inj 10.0m" / "#3 Rem"
-        var abbr = tree.dir === 'Protect' ? 'Pro' : tree.dir === 'Injury' ? 'Inj' : 'Rem';
         var contents;
         if (tree.tpz_m === null) {
             contents = '#' + tree.num + ' ' + abbr;
@@ -129,8 +99,6 @@ JSX_BODY = r"""
             var tpzStr = (Math.round(tree.tpz_m * 10) / 10).toFixed(1);
             contents = '#' + tree.num + ' ' + abbr + ' ' + tpzStr + 'm';
         }
-
-        var color = (tree.dir === 'Protect') ? GREEN : ORANGE;
 
         // Measure at origin to get bb-center offset from anchor
         var gbM = measureLabel(contents, 0, 0, fontName, fontSize, Justification.LEFT);
@@ -185,7 +153,6 @@ JSX_BODY = r"""
         tf.moveToEnd(grp);
         bg.moveToEnd(grp);
 
-        placedBounds.push(finalGb);
         placed++;
     }
 
@@ -194,44 +161,24 @@ JSX_BODY = r"""
 """
 
 
-def read_excel(path):
-    pythoncom.CoInitialize()
-    xl = win32com.client.Dispatch("Excel.Application")
-    xl.Visible = False
-    xl.DisplayAlerts = False
-    wb = xl.Workbooks.Open(os.path.abspath(path))
-    ws = wb.Sheets("Sheet1")
-
+def read_csv(path):
+    if os.path.exists(XLSX_PATH) and os.path.getmtime(XLSX_PATH) > os.path.getmtime(path):
+        print("WARNING: Excel is newer than data.csv — run: python export_data.py")
     trees = []
-    row = 3
-    while True:
-        tree_num_raw = ws.Cells(row, 1).Value   # col A
-        if tree_num_raw is None:
-            break
-        direction = ws.Cells(row, 9).Value      # col I
-        tpz_raw   = ws.Cells(row, 10).Value     # col J
-        size_raw  = ws.Cells(row, 14).Value     # col N
-        cx_raw    = ws.Cells(row, 15).Value     # col O
-        cy_raw    = ws.Cells(row, 16).Value     # col P
-
-        tpz_m   = float(tpz_raw)  if isinstance(tpz_raw,  (int, float)) else None
-        size_mm = float(size_raw) if isinstance(size_raw, (int, float)) and size_raw > 0 else None
-
-        if not isinstance(cx_raw, (int, float)) or not isinstance(cy_raw, (int, float)):
-            row += 1
-            continue
-
-        trees.append({
-            "num":    str(int(tree_num_raw)) if isinstance(tree_num_raw, (int, float)) else str(tree_num_raw).strip(),
-            "dir":    str(direction) if direction else "",
-            "tpz_m":  tpz_m,
-            "size_mm": size_mm,
-            "cx":     float(cx_raw),
-            "cy":     float(cy_raw),
-        })
-        row += 1
-
-    wb.Close(False)
+    with open(path, newline='', encoding='utf-8') as f:
+        for row in csv.DictReader(f):
+            cx = float(row['cx']) if row['cx'] else None
+            cy = float(row['cy']) if row['cy'] else None
+            if cx is None or cy is None:
+                continue
+            tpz_m = float(row['tpz_m']) if row['tpz_m'] else None
+            trees.append({
+                'num':   row['tree_num'],
+                'dir':   row['direction'],
+                'tpz_m': tpz_m,
+                'cx':    cx,
+                'cy':    cy,
+            })
     return trees
 
 
@@ -257,8 +204,8 @@ def main():
     parser.add_argument("--limit", type=int, default=None, help="Process only first N trees")
     args = parser.parse_args()
 
-    print(f"Reading Excel: {EXCEL_PATH}")
-    trees = read_excel(EXCEL_PATH)
+    print(f"Reading CSV: {CSV_PATH}")
+    trees = read_csv(CSV_PATH)
     print(f"  {len(trees)} trees loaded")
 
     if args.limit is not None:

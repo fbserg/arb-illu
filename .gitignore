@@ -1,0 +1,5 @@
+illustrator-mcp/.venv/
+__pycache__/
+*.ai
+*.pyc
+~$*

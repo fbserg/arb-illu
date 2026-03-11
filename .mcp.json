@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "illustrator": {
+      "command": "C:\\Projects\\arborist-plans\\illustrator-mcp\\.venv\\Scripts\\python.exe",
+      "args": [
+        "C:\\Projects\\arborist-plans\\illustrator-mcp\\illustrator\\server.py"
+      ]
+    }
+  }
+}

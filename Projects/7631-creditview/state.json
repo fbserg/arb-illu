@@ -1,0 +1,148 @@
+{
+  "placements": {
+    "20": {
+      "imgX": 2161.09,
+      "imgY": 2913.88,
+      "tpzOverride": null
+    },
+    "17": {
+      "imgX": 2196.34,
+      "imgY": 2643.02,
+      "tpzOverride": null
+    },
+    "24": {
+      "imgX": 2208.31,
+      "imgY": 2744.49,
+      "tpzOverride": null
+    },
+    "2": {
+      "imgX": 2474.04,
+      "imgY": 2514.47,
+      "tpzOverride": null
+    },
+    "4": {
+      "imgX": 1899.74,
+      "imgY": 3386.41,
+      "tpzOverride": null
+    },
+    "11": {
+      "imgX": 2606.33,
+      "imgY": 2124.19,
+      "tpzOverride": null
+    },
+    "18": {
+      "imgX": 2219.87,
+      "imgY": 2676.53,
+      "tpzOverride": null
+    },
+    "6": {
+      "imgX": 1040.48,
+      "imgY": 2483.88,
+      "tpzOverride": null
+    },
+    "10": {
+      "imgX": 2619.63,
+      "imgY": 2108.76,
+      "tpzOverride": null
+    },
+    "22": {
+      "imgX": 2115.24,
+      "imgY": 2853.75,
+      "tpzOverride": null
+    },
+    "3": {
+      "imgX": 1069.17,
+      "imgY": 3418.52,
+      "tpzOverride": null
+    },
+    "23": {
+      "imgX": 2177.31,
+      "imgY": 2807.13,
+      "tpzOverride": null
+    },
+    "8": {
+      "imgX": 940.86,
+      "imgY": 2346.12,
+      "tpzOverride": null
+    },
+    "1": {
+      "imgX": 2652.86,
+      "imgY": 2275.67,
+      "tpzOverride": null
+    },
+    "1-1": {
+      "imgX": 1069.16,
+      "imgY": 3161.48,
+      "tpzOverride": null
+    },
+    "5": {
+      "imgX": 1074.23,
+      "imgY": 2623.03,
+      "tpzOverride": null
+    },
+    "19": {
+      "imgX": 2192.2,
+      "imgY": 2939.9,
+      "tpzOverride": null
+    },
+    "12": {
+      "imgX": 2648.32,
+      "imgY": 2160.86,
+      "tpzOverride": null
+    },
+    "9": {
+      "imgX": 2644.01,
+      "imgY": 2062.46,
+      "tpzOverride": null
+    },
+    "2-1": {
+      "imgX": 1069.16,
+      "imgY": 3333.44,
+      "tpzOverride": null
+    },
+    "3-1": {
+      "imgX": 2063.23,
+      "imgY": 3076.23,
+      "tpzOverride": null
+    },
+    "15": {
+      "imgX": 2149.53,
+      "imgY": 2533.18,
+      "tpzOverride": null
+    },
+    "7": {
+      "imgX": 1041.35,
+      "imgY": 2404.84,
+      "tpzOverride": null
+    },
+    "14": {
+      "imgX": 2195.35,
+      "imgY": 2522.36,
+      "tpzOverride": null
+    },
+    "13": {
+      "imgX": 2644.11,
+      "imgY": 2191.64,
+      "tpzOverride": null
+    },
+    "21": {
+      "imgX": 2163.45,
+      "imgY": 2885.47,
+      "tpzOverride": null
+    },
+    "4-1": {
+      "imgX": 1075.6,
+      "imgY": 3061.26,
+      "tpzOverride": null
+    },
+    "16": {
+      "imgX": 2201.36,
+      "imgY": 2591.38,
+      "tpzOverride": null
+    }
+  },
+  "planScale": 200,
+  "targetScale": 200,
+  "pageNum": 0,
+  "lastModified": "2026-03-10"
+}

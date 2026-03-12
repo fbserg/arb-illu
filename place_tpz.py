@@ -46,6 +46,7 @@ JSX_BODY = r"""
 
     var tpzLayer   = findOrCreateLayer(doc, 'TPZs');
     tpzLayer.visible = true; tpzLayer.locked = false;
+    doc.activeLayer = tpzLayer;
 
     if (CLEAR_FIRST) {
         // Groups clear their children in one shot — much faster than path-by-path removal.
@@ -68,6 +69,15 @@ JSX_BODY = r"""
         var tpzMm   = tree.tpz_mm;
         var trunkMm = tree.trunk_mm;
         var dir     = tree.dir;
+
+        // Portrait artboard = PDF-native space; convert from landscape artboard coords
+        // Inverse of: cx = -684 + y_pdf, cy = 468 - x_pdf
+        if ((abTop - abBottom) > (abRight - abLeft)) {
+            var x_pdf = 468 - cy;
+            var y_pdf = cx + 684;
+            cx = x_pdf;
+            cy = y_pdf;
+        }
 
         if (tpzMm === null || tpzMm <= 0) {
             skipped.push({ num: tree.num, reason: "no TPZ size" });

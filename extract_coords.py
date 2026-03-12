@@ -140,13 +140,13 @@ def main():
             break
         tree_num = str(int(tree_num_raw)) if isinstance(tree_num_raw, (int, float)) else str(tree_num_raw).strip()
 
-        has_cx = isinstance(ws.Cells(row, 15).Value, (int, float))  # col O
+        has_cx = isinstance(ws.Cells(row, 16).Value, (int, float))  # col P
         if has_cx:
             skipped.append(tree_num)
         elif tree_num in found:
             cx, cy = found[tree_num]
-            ws.Cells(row, 15).Value = cx
-            ws.Cells(row, 16).Value = cy
+            ws.Cells(row, 16).Value = cx
+            ws.Cells(row, 17).Value = cy
             filled.append(tree_num)
         else:
             not_found.append(tree_num)

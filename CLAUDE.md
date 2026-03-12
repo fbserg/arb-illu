@@ -3,44 +3,33 @@
 Automated TPZ circle placement on arborist site plans using Illustrator MCP + Excel inventory data.
 
 ## Hard Rules (never break these)
-- NEVER use `doc.pageItems` or `layer.pageItems` on Site Plan or any layer with placed PDFs
-- Always use typed collections: `layer.pathItems` / `layer.textFrames` / `layer.groupItems`
+- NEVER use `doc.pageItems` or `layer.pageItems` — use typed: `layer.pathItems` / `layer.textFrames` / `layer.groupItems`
 - NEVER `JSON.stringify()` Illustrator objects — freezes app
+- NEVER clear a layer in a `pathItems` while loop if sublayers exist — remove sublayers first, then loop
+- TPZ layer is named **"TPZs"** (not "Trees", not "TPZ")
+- NEVER use chained ternaries in ExtendScript — it associates left-to-right. Always parenthesise: `a ? 'x' : (b ? 'y' : 'z')`
+- After manual position nudges in Illustrator: query MCP `geometricBounds` → update data.csv → update Excel P/Q. Excel is the source of truth; skipping the Excel write means the next `export_data.py` clobbers the corrected coords.
 
-## What needs to be done
+## Workflow
+```
+python export_data.py           # whenever Excel is edited → regenerates data.csv
+python place_tpz.py --limit 10  # place in batches; use --all only when confident
+python place_labels.py
+python review.py                # 6-point audit
+python extract_coords.py        # first-time only: extract coords from Dimensions layer → Excel → CSV
+```
 
-### 1. Read tree data from Excel
-→ `docs/excel-workflow.md`
-Key: use `win32com` (not openpyxl) to get computed values. Main data on **Sheet1**. Circle sizes in col N (mm), centerpoints in cols O/P, trunk sizes in col Q.
-
-### 2. Transform LogLog coordinates → Illustrator
-→ `docs/coordinate-system.md`
-Key: site plan is rotated 90° CW in Illustrator. X and Y axes swap + scale. Quick formula:
-`cx = docW - y_pdf*(docW/docH)` / `cy = docH - x_pdf*(docH/docW)`
-
-### 3. Place TPZ circles in Illustrator
-→ `docs/circle-styles.md`
-Key: all circles on **TPZs** layer. Protect=green solid, Injury=orange dashed, Removal=orange solid+X. Trunk sublayer inside TPZs.
-
-### 4. Match existing circles to tree numbers
-→ `docs/circle-styles.md#matching`
-Key: find 3-pt elbow leader lines on Dimensions layer, match endpoints to labels and circle centers (dist < 80pt).
+## Docs (source of truth)
+- **Excel columns + CSV schema**: → `docs/excel-workflow.md`
+- **Coordinate transform**: → `docs/coordinate-system.md`
+- **Circle styles + layer structure**: → `docs/circle-styles.md`
 
 ## MCP Setup
 - Server: `illustrator-mcp/` — config in `.mcp.json`
-- COM retry already applied (3× retry with 1s delay)
+- COM retry: 3× with 0.3s delay (auto-heals transient errors)
+- Illustrator must be running with the document open
 
-## Placement workflow
-1. Read + transform: `python place_tpz.py` — places TPZ circles + trunks in one pass
-2. Labels: `python place_labels.py` — places tree number labels
-3. Verify: `python review.py` — 6-point audit
-4. Visual: ask user to confirm via `view`
-
-## Verification (use query, not view)
-- `query` tool → JSON snapshot of layer state, circle counts, positions
-- Use `view` only for final human sign-off, not intermediate checks
-- After each `run`, call `query` to confirm expected circle count before proceeding
-
-## COM reliability
-- `run` tool retries 3× before failing — transient errors should self-heal
-- If 3 retries all fail: Illustrator may be unresponsive; ask user to check
+## Verification
+- Use `query` tool for intermediate checks (JSON snapshot of layer state)
+- `view` is unreliable (AppActivate doesn't reliably focus Illustrator) — ask user to check directly
+- After each `run`, call `query` to confirm expected circle count

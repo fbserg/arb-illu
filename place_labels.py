@@ -20,6 +20,10 @@ JSX_BODY = r"""
     var doc;
     try { doc = app.activeDocument; } catch(e) { return '{"error":"No document open"}'; }
 
+    var ab = doc.artboards[0].artboardRect;
+    var abTop = ab[1], abBottom = ab[3], abLeft = ab[0], abRight = ab[2];
+    var isPortrait = (abTop - abBottom) > (abRight - abLeft);
+
     var fontName = "Arial-BoldMT", fontSize = 5;
 
     // 1 — Gather circle bounds from TPZs layer (circles are in groups)
@@ -34,11 +38,11 @@ JSX_BODY = r"""
     for (var li = 0; li < doc.layers.length; li++) {
         if (doc.layers[li].name === 'Labels') { labelsLayer = doc.layers[li]; break; }
     }
-    if (labelsLayer) {
+    if (labelsLayer && CLEAR_FIRST) {
         while (labelsLayer.groupItems.length > 0) labelsLayer.groupItems[0].remove();
         while (labelsLayer.pathItems.length  > 0) labelsLayer.pathItems[0].remove();
         while (labelsLayer.textFrames.length > 0) labelsLayer.textFrames[0].remove();
-    } else {
+    } else if (!labelsLayer) {
         labelsLayer = doc.layers.add();
         labelsLayer.name = 'Labels';
     }
@@ -84,11 +88,12 @@ JSX_BODY = r"""
     for (var ti = 0; ti < TREES.length; ti++) {
         var tree = TREES[ti];
         var cx = tree.cx, cy = tree.cy;
+        if (isPortrait) { var x_pdf = 468 - cy; cy = cx + 684; cx = x_pdf; }
         var dir = tree.dir;
 
         // Retain is visually identical to Protect
         var isProtect = (dir === 'Protect' || dir === 'Retain');
-        var abbr  = isProtect ? 'Pro' : dir === 'Injury' ? 'Inj' : 'Rem';
+        var abbr  = isProtect ? 'Pro' : (dir === 'Injury' ? 'Inj' : 'Rem');
         var color = isProtect ? GREEN : ORANGE;
 
         // Compact label: "#1 Pro 12.0m" / "#1 Inj 10.0m" / "#3 Rem"
@@ -149,6 +154,7 @@ JSX_BODY = r"""
 
         // Group dot + tf + bg into one selectable label unit
         var grp = labelsLayer.groupItems.add();
+        grp.name = 'Tree ' + tree.num;
         dot.moveToEnd(grp);
         tf.moveToEnd(grp);
         bg.moveToEnd(grp);
@@ -201,18 +207,22 @@ def run_jsx(jsx_code):
 
 def main():
     parser = argparse.ArgumentParser(description="Place TPZ labels in Illustrator")
-    parser.add_argument("--limit", type=int, default=None, help="Process only first N trees")
+    parser.add_argument("--offset", type=int, default=0,    help="Skip first N trees")
+    parser.add_argument("--limit",  type=int, default=None, help="Process only N trees after offset")
     args = parser.parse_args()
 
     print(f"Reading CSV: {CSV_PATH}")
     trees = read_csv(CSV_PATH)
     print(f"  {len(trees)} trees loaded")
 
+    trees = trees[args.offset:]
     if args.limit is not None:
         trees = trees[:args.limit]
-        print(f"  Limited to first {len(trees)} trees")
+    if args.offset or args.limit is not None:
+        print(f"  Using rows {args.offset}–{args.offset + len(trees) - 1} ({len(trees)} trees)")
 
-    jsx = "var TREES = " + json.dumps(trees) + ";\n" + JSX_BODY
+    clear_first = (args.offset == 0)
+    jsx = "var CLEAR_FIRST = " + ("true" if clear_first else "false") + ";\n" + "var TREES = " + json.dumps(trees) + ";\n" + JSX_BODY
 
     print("Placing labels in Illustrator...")
     raw = run_jsx(jsx)

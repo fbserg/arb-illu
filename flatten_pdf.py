@@ -20,11 +20,22 @@ def _blank_form(writer):
     form._data = b''
     return writer._add_object(form)
 
-def sanitize(src, dst, no_images=False, crop=None):
-    from pypdf import PdfReader, PdfWriter
+def _annotation_rect(page):
+    from pypdf.generic import NameObject
+    annots = page.get('/Annots')
+    if not annots:
+        return None
+    for a in annots:
+        obj = a.get_object() if hasattr(a, 'get_object') else a
+        if obj.get('/Subtype') in (NameObject('/Square'), NameObject('/Rectangle')):
+            r = obj['/Rect']
+            return tuple(float(v) for v in r)
+    return None
+
+def sanitize(reader, dst, no_images=False, crop=None):
+    from pypdf import PdfWriter
     from pypdf.generic import NameObject, RectangleObject
 
-    reader = PdfReader(src)
     writer = PdfWriter()
     writer.append(reader)
     page = writer.pages[0]
@@ -61,32 +72,20 @@ def _run_gs(src, out, extra_flags=None):
     cmd.append(src)
     subprocess.run(cmd, check=True)
 
-def read_annotation_rect(src):
-    from pypdf import PdfReader
-    from pypdf.generic import NameObject
-    page = PdfReader(src).pages[0]
-    annots = page.get('/Annots')
-    if not annots:
-        return None
-    for a in annots:
-        obj = a.get_object() if hasattr(a, 'get_object') else a
-        if obj.get('/Subtype') in (NameObject('/Square'), NameObject('/Rectangle')):
-            r = obj['/Rect']
-            return tuple(float(v) for v in r)
-    return None
-
 def flatten(src, no_images=False, crop=None):
+    from pypdf import PdfReader
     src = os.path.abspath(src)
     out = os.path.splitext(src)[0] + " flat.pdf"
+    reader = PdfReader(src)
     if crop is None:
-        crop = read_annotation_rect(src)
+        crop = _annotation_rect(reader.pages[0])
         if crop:
             print(f"  Found annotation rect: {tuple(round(v, 1) for v in crop)}")
     if no_images or crop is not None:
         tmp_fd, tmp = tempfile.mkstemp(suffix='.pdf', prefix='_sanitize_')
         os.close(tmp_fd)
         try:
-            sanitize(src, tmp, no_images=no_images, crop=crop)
+            sanitize(reader, tmp, no_images=no_images, crop=crop)
             _run_gs(tmp, out, extra_flags=["-dUseCropBox"] if crop is not None else None)
         finally:
             if os.path.exists(tmp):

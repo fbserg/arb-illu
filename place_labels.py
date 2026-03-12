@@ -20,10 +20,6 @@ JSX_BODY = r"""
     var doc;
     try { doc = app.activeDocument; } catch(e) { return '{"error":"No document open"}'; }
 
-    var ab = doc.artboards[0].artboardRect;
-    var abTop = ab[1], abBottom = ab[3], abLeft = ab[0], abRight = ab[2];
-    var isPortrait = (abTop - abBottom) > (abRight - abLeft);
-
     var fontName = "Arial-BoldMT", fontSize = 5;
 
     // 1 — Gather circle bounds from TPZs layer (circles are in groups)
@@ -88,7 +84,6 @@ JSX_BODY = r"""
     for (var ti = 0; ti < TREES.length; ti++) {
         var tree = TREES[ti];
         var cx = tree.cx, cy = tree.cy;
-        if (isPortrait) { var x_pdf = 468 - cy; cy = cx + 684; cx = x_pdf; }
         var dir = tree.dir;
 
         // Retain is visually identical to Protect

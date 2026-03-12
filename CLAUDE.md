@@ -2,6 +2,12 @@
 
 Automated TPZ circle placement on arborist site plans using Illustrator MCP + Excel inventory data.
 
+## Current Project
+**Scarlett** — `Projects/scarlett/` — active, primary focus until complete.
+- Working file: `Projects/scarlett/PLAN.ai`
+- Inventory: `Projects/scarlett/inventory.xlsx`
+- PDFs: `PLAN flat.pdf` (flattened, use for import), `site-plan.pdf` (reference)
+
 ## Hard Rules (never break these)
 - NEVER use `doc.pageItems` or `layer.pageItems` — use typed: `layer.pathItems` / `layer.textFrames` / `layer.groupItems`
 - NEVER `JSON.stringify()` Illustrator objects — freezes app

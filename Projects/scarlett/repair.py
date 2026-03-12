@@ -5,50 +5,8 @@ Workflow:
   2. Delete stale labels from Illustrator
   3. python Projects/scarlett/repair.py
 """
-import sys, os, csv, json, tempfile
-
-try:
-    import win32com.client, pythoncom
-except ImportError:
-    print("ERROR: pywin32 not installed."); sys.exit(1)
-
-DATA_PATH  = r"C:\Projects\arborist-plans\Projects\scarlett\data.csv"
-EXCEL_PATH = r"C:\Projects\arborist-plans\Projects\scarlett\Excel Master Sheet.xlsx"
-PLAN_W, PLAN_H = 2384, 3370
-
-
-def transform(cx, cy):
-    return (PLAN_W + PLAN_H) / 2 - cy, cx + (PLAN_H - PLAN_W) / 2
-
-
-def normalize_dir(d):
-    """Collapse Excel variants like 'Remove (1)' → 'Remove'."""
-    dl = d.lower()
-    if dl.startswith('remove') or dl.startswith('removal'):
-        return 'Remove'
-    if dl.startswith('injur'):
-        return 'Injury'
-    if dl.startswith('retain'):
-        return 'Retain'
-    if dl.startswith('protect'):
-        return 'Protect'
-    return d
-
-
-def run_jsx(jsx_code):
-    pythoncom.CoInitialize()
-    tmp = tempfile.NamedTemporaryFile(suffix=".jsx", delete=False, mode="w", encoding="utf-8")
-    tmp.write(jsx_code); path = tmp.name; tmp.close()
-    try:
-        ai = win32com.client.GetActiveObject("Illustrator.Application")
-        result = ai.DoJavaScriptFile(path)
-    finally:
-        os.unlink(path)
-    result = str(result) if result is not None else ""
-    if not result.strip().startswith("{"):
-        raise RuntimeError("JS returned: " + result)
-    return result
-
+import sys, json, argparse
+from _utils import check_excel_staleness, run_jsx, load_trees
 
 QUERY_JSX = r"""
 (function() {
@@ -234,49 +192,22 @@ PLACE_JSX = r"""
 
 
 def main():
-    import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument("--trees", help="Comma-separated tree nums to force-repair (bypasses missing detection)")
     args = parser.parse_args()
 
-    if os.path.exists(EXCEL_PATH) and os.path.getmtime(EXCEL_PATH) > os.path.getmtime(DATA_PATH):
-        print("WARNING: Excel is newer than data.csv — run: python Projects/scarlett/export_data.py")
-
-    # Load data.csv
-    all_trees = []
-    with open(DATA_PATH, newline='', encoding='utf-8') as f:
-        for row in csv.DictReader(f):
-            cx = float(row['cx']) if row['cx'] else None
-            cy = float(row['cy']) if row['cy'] else None
-            if cx is None or cy is None:
-                continue
-            cx, cy = transform(cx, cy)
-            all_trees.append({
-                'num':    row['tree_num'],
-                'dir':    normalize_dir(row['direction']),
-                'tpz_m':  float(row['tpz_m'])  if row['tpz_m']  else None,
-                'tpz_mm': float(row['tpz_mm']) if row['tpz_mm'] else None,
-                'cx':     cx,
-                'cy':     cy,
-            })
+    check_excel_staleness()
+    all_trees = load_trees()
 
     if args.trees:
-        # Force-repair specific trees regardless of what's in Illustrator
         force_set = set(t.strip() for t in args.trees.split(","))
         to_repair = [t for t in all_trees if t['num'] in force_set]
     else:
-        # Step 1: find which labels exist in Illustrator
         print("Querying Labels layer...")
-        raw = run_jsx(QUERY_JSX)
-        qdata = json.loads(raw)
+        qdata = json.loads(run_jsx(QUERY_JSX))
         if "error" in qdata:
             print(f"ERROR: {qdata['error']}"); sys.exit(1)
-
-        existing = set()
-        for name in qdata.get("groups", []):
-            if name.startswith("Tree "):
-                existing.add(name[5:])
-
+        existing = {name[5:] for name in qdata.get("groups", []) if name.startswith("Tree ")}
         to_repair = [t for t in all_trees if t['num'] not in existing]
 
     if not to_repair:
@@ -284,11 +215,7 @@ def main():
 
     print(f"Repairing {len(to_repair)} trees: {', '.join(t['num'] for t in to_repair)}")
 
-    # Step 3: place circles + labels
-    jsx = "var TREES = " + json.dumps(to_repair) + ";\n" + PLACE_JSX
-    raw = run_jsx(jsx)
-    result = json.loads(raw)
-
+    result = json.loads(run_jsx("var TREES = " + json.dumps(to_repair) + ";\n" + PLACE_JSX))
     if "error" in result:
         print(f"ERROR: {result['error']}"); sys.exit(1)
 

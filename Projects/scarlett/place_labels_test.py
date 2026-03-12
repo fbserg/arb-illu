@@ -1,10 +1,6 @@
 """Quick test: place a text label at every coord in coords.csv — no circles."""
-import csv, json, os, sys, tempfile
-
-try:
-    import win32com.client, pythoncom
-except ImportError:
-    print("ERROR: pywin32 not installed."); sys.exit(1)
+import csv, json, sys
+from _utils import run_jsx
 
 COORDS_PATH = r"C:\Projects\arborist-plans\Projects\scarlett\coords.csv"
 
@@ -52,19 +48,7 @@ def main():
             trees.append({'label': label, 'cx': float(row['cx']), 'cy': float(row['cy'])})
 
     print(f"Placing {len(trees)} labels...")
-    jsx = "var TREES = " + json.dumps(trees) + ";\n" + JSX
-
-    pythoncom.CoInitialize()
-    tmp = tempfile.NamedTemporaryFile(suffix=".jsx", delete=False, mode="w", encoding="utf-8")
-    tmp.write(jsx); path = tmp.name; tmp.close()
-    try:
-        ai = win32com.client.GetActiveObject("Illustrator.Application")
-        raw = ai.DoJavaScriptFile(path)
-    finally:
-        os.unlink(path)
-
-    import json as j
-    data = j.loads(raw)
+    data = json.loads(run_jsx("var TREES = " + json.dumps(trees) + ";\n" + JSX))
     if "error" in data:
         print(f"ERROR: {data['error']}"); sys.exit(1)
     print(f"Done: {data['placed']} labels on 'Labels Test' layer")

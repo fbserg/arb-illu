@@ -1,18 +1,5 @@
-import sys, os, csv, json, argparse, tempfile
-
-try:
-    import win32com.client, pythoncom
-except ImportError:
-    print("ERROR: pywin32 not installed."); sys.exit(1)
-
-DATA_PATH   = r"C:\Projects\arborist-plans\Projects\scarlett\data.csv"
-EXCEL_PATH  = r"C:\Projects\arborist-plans\Projects\scarlett\Excel Master Sheet.xlsx"
-
-PLAN_W, PLAN_H = 2384, 3370
-
-def transform(cx, cy):
-    """PLAN.ai coords → template coords (90° CCW rotation around artboard centre)."""
-    return (PLAN_W + PLAN_H) / 2 - cy, cx + (PLAN_H - PLAN_W) / 2
+import sys, json, argparse
+from _utils import check_excel_staleness, run_jsx, load_trees
 
 JSX_BODY = r"""
 (function() {
@@ -107,48 +94,6 @@ JSX_BODY = r"""
 """
 
 
-def load_data(limit, offset):
-    if os.path.exists(EXCEL_PATH) and os.path.getmtime(EXCEL_PATH) > os.path.getmtime(DATA_PATH):
-        print("WARNING: Excel is newer than data.csv — run: python Projects/scarlett/export_data.py")
-
-    trees = []
-    with open(DATA_PATH, newline='', encoding='utf-8') as f:
-        for row in csv.DictReader(f):
-            cx  = float(row['cx'])  if row['cx']  else None
-            cy  = float(row['cy'])  if row['cy']  else None
-            if cx is None or cy is None:
-                continue
-            tpz_mm = float(row['tpz_mm']) if row['tpz_mm'] else None
-            cx, cy = transform(cx, cy)
-            trees.append({
-                'num':    row['tree_num'],
-                'cx':     cx,
-                'cy':     cy,
-                'dir':    row['direction'],
-                'tpz_mm': tpz_mm,
-            })
-
-    trees = trees[offset:]
-    if limit is not None:
-        trees = trees[:limit]
-    return trees
-
-
-def run_jsx(jsx_code):
-    pythoncom.CoInitialize()
-    tmp = tempfile.NamedTemporaryFile(suffix=".jsx", delete=False, mode="w", encoding="utf-8")
-    tmp.write(jsx_code); tmp_path = tmp.name; tmp.close()
-    try:
-        ai = win32com.client.GetActiveObject("Illustrator.Application")
-        result = ai.DoJavaScriptFile(tmp_path)
-    finally:
-        os.unlink(tmp_path)
-    result = str(result) if result is not None else ""
-    if not result.strip().startswith("{"):
-        raise RuntimeError("JS returned: " + result)
-    return result
-
-
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--offset", type=int, default=0)
@@ -156,8 +101,12 @@ def main():
     parser.add_argument("--all",    action="store_true")
     args = parser.parse_args()
 
-    limit = None if args.all else args.limit
-    trees = load_data(limit, args.offset)
+    check_excel_staleness()
+    trees = load_trees()
+    trees = trees[args.offset:]
+    if not args.all:
+        trees = trees[:args.limit]
+
     clear_first = (args.offset == 0)
     print(f"Placing {len(trees)} trees (offset={args.offset}, {'clearing layer' if clear_first else 'appending'})")
 
